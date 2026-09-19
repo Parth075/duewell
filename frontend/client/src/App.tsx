@@ -246,8 +246,8 @@ function BillReminderApp() {
 
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
-            <Route index element={<DashboardPage bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} />} />
-            <Route path="bills" element={<DashboardPage bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} showAll />} />
+            <Route index element={<DashboardPage userName={userName} bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} />} />
+            <Route path="bills" element={<DashboardPage userName={userName} bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} showAll />} />
             <Route path="calendar" element={<CalendarPage bills={bills} onSelect={setSelectedBill} />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Routes>
@@ -265,8 +265,10 @@ function PageFrame({ children, eyebrow, title, subtitle, action }: { children: R
   return <motion.div className="page-frame" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: .25, ease: [0.23, 1, 0.32, 1] }}><div className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p className="page-subtitle">{subtitle}</p></div>{action}</div>{children}</motion.div>;
 }
 
-function DashboardPage({ bills, filteredBills, totals, query, setQuery, activeFilter, setActiveFilter, onAdd, onSelect, onMarkPaid, showAll = false }: { bills: Bill[]; filteredBills: Bill[]; totals: { owed: number; dueSoon: number; overdue: number }; query: string; setQuery: (value: string) => void; activeFilter: "all" | BillStatus; setActiveFilter: (value: "all" | BillStatus) => void; onAdd: () => void; onSelect: (bill: Bill) => void; onMarkPaid: (id: number) => void; showAll?: boolean }) {
-  return <PageFrame eyebrow="Friday, September 18, 2026" title="Good evening, Alex" subtitle="A clear view of what’s coming up — and what can wait." action={<button className="primary-button" onClick={onAdd}><Plus size={17} /> Add a bill</button>}>
+function DashboardPage({ bills, filteredBills, totals, query, setQuery, activeFilter, setActiveFilter, onAdd, onSelect, onMarkPaid, showAll = false, userName = "there" }: { bills: Bill[]; filteredBills: Bill[]; totals: { owed: number; dueSoon: number; overdue: number }; query: string; setQuery: (value: string) => void; activeFilter: "all" | BillStatus; setActiveFilter: (value: "all" | BillStatus) => void; onAdd: () => void; onSelect: (bill: Bill) => void; onMarkPaid: (id: number) => void; showAll?: boolean; userName?: string }) {
+  const todayFormatted = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date());
+  const greeting = userName && userName !== "there" ? `Good evening, ${userName}` : "Good evening";
+  return <PageFrame eyebrow={todayFormatted} title={greeting} subtitle="A clear view of what’s coming up — and what can wait." action={<button className="primary-button" onClick={onAdd}><Plus size={17} /> Add a bill</button>}>
     <div className="summary-grid">
       <SummaryCard label="Outstanding" value={`₹${totals.owed.toLocaleString("en-IN")}`} meta="across 4 upcoming bills" icon={<CircleDollarSign size={19} />} tone="primary" chart />
       <SummaryCard label="Due this week" value={String(totals.dueSoon)} meta="Next: Airtel on Sep 21" icon={<Bell size={18} />} tone="amber" />
