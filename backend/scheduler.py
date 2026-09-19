@@ -22,10 +22,13 @@ def send_notification(recipient_email: str, subject: str, message: str) -> dict:
     """
     Sends email via Gmail SMTP if credentials exist, otherwise logs in-app notification.
     """
-    if GMAIL_USER and GMAIL_APP_PASSWORD and recipient_email:
+    gmail_user = os.getenv("GMAIL_USER", GMAIL_USER)
+    gmail_pw = os.getenv("GMAIL_APP_PASSWORD", GMAIL_APP_PASSWORD)
+
+    if gmail_user and gmail_pw and recipient_email:
         try:
             msg = MIMEMultipart()
-            msg["From"] = f"Duewell Assistant <{GMAIL_USER}>"
+            msg["From"] = f"Duewell Assistant <{gmail_user}>"
             msg["To"] = recipient_email
             msg["Subject"] = subject
 
@@ -38,30 +41,30 @@ def send_notification(recipient_email: str, subject: str, message: str) -> dict:
             msg.attach(MIMEText(body, "plain"))
 
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                server.login(gmail_user, gmail_pw)
                 server.send_message(msg)
 
             try:
                 print(f"[scheduler] Email sent successfully to {recipient_email}")
             except Exception:
                 pass
-            return {"channel": "email", "status": "sent"}
+            return {"channel": "email", "status": "sent", "recipient": recipient_email}
         except Exception as e:
             try:
                 print(f"[scheduler] Failed to send email via SMTP: {e}")
             except Exception:
                 pass
             # Fall back to in-app
-            return {"channel": "in-app", "status": "sent", "error": str(e)}
+            return {"channel": "in-app", "status": "sent", "error": str(e), "recipient": recipient_email}
 
     try:
         safe_msg = f"{subject} - {message}".encode('ascii', errors='replace').decode('ascii')
-        print(f"[scheduler.in-app] Notification logged: {safe_msg}")
+        print(f"[scheduler.in-app] Notification logged for {recipient_email}: {safe_msg}")
     except Exception:
         pass
-    return {"channel": "in-app", "status": "sent"}
+    return {"channel": "in-app", "status": "sent", "recipient": recipient_email}
 
-def trigger_bill_reminder(bill_id: int, db: Session, user_email: str = "alex@example.com") -> models.Reminder:
+def trigger_bill_reminder(bill_id: int, db: Session, user_email: str = None) -> models.Reminder:
     """
     On-demand reminder trigger:
     Runs decide_reminder_schedule + send_notification + creates DB reminder entry.
@@ -69,6 +72,16 @@ def trigger_bill_reminder(bill_id: int, db: Session, user_email: str = "alex@exa
     bill = db.query(models.Bill).filter(models.Bill.id == bill_id).first()
     if not bill:
         raise ValueError(f"Bill with ID {bill_id} not found")
+
+    target_email = user_email
+    if not target_email and bill.user_id:
+        user = db.query(models.User).filter(models.User.id == bill.user_id).first()
+        if user and user.email and user.email != "alex@example.com":
+            target_email = user.email
+
+    gmail_user = os.getenv("GMAIL_USER", GMAIL_USER)
+    if not target_email or target_email == "alex@example.com":
+        target_email = gmail_user or "alex@example.com"
 
     bill_dict = {
         "id": bill.id,
@@ -84,7 +97,7 @@ def trigger_bill_reminder(bill_id: int, db: Session, user_email: str = "alex@exa
     subject = f"Duewell Reminder: {bill.biller} is due {bill.dueDate}"
 
     notif_result = send_notification(
-        recipient_email=user_email,
+        recipient_email=target_email,
         subject=subject,
         message=message
     )

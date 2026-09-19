@@ -368,13 +368,13 @@ async def upload_bill_document(file: UploadFile = File(...)):
 
 # --- Reminder Trigger ---
 @app.post("/bills/{bill_id}/trigger-reminder")
-def trigger_reminder(bill_id: int, db: Session = Depends(get_db)):
+def trigger_reminder(bill_id: int, recipient_email: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Triggers an on-demand reminder for a bill using agent.decide_reminder_schedule
     and scheduler.send_notification.
     """
     try:
-        reminder = scheduler.trigger_bill_reminder(bill_id=bill_id, db=db)
+        reminder = scheduler.trigger_bill_reminder(bill_id=bill_id, db=db, user_email=recipient_email)
         return {
             "success": True,
             "message": "Reminder triggered successfully",

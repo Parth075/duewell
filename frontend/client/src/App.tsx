@@ -159,11 +159,13 @@ function BillReminderApp() {
   const triggerReminder = async (billId: number) => {
     try {
       toast.info("Analyzing reminder schedule with AI…");
-      const res = await apiRequest(`/bills/${billId}/trigger-reminder`, { method: "POST" });
+      const userParam = storedUser?.email ? `?recipient_email=${encodeURIComponent(storedUser.email)}` : "";
+      const res = await apiRequest(`/bills/${billId}/trigger-reminder${userParam}`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         const msg = data.reminder?.message || "Reminder sent successfully";
-        toast.success("Reminder triggered!", { description: msg });
+        const channelNote = data.reminder?.channel === "email" ? "Email dispatched to your inbox!" : "Reminder scheduled!";
+        toast.success(channelNote, { description: msg });
         setUnread((prev) => prev + 1);
         loadReminders();
       } else {
