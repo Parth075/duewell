@@ -399,14 +399,25 @@ def trigger_reminder(bill_id: int, recipient_email: Optional[str] = None, db: Se
 
 @app.get("/mail-status")
 def mail_status():
-    """Diagnostic check to see if Render has Gmail SMTP configured."""
+    """Diagnostic check to see email provider configuration on Render."""
+    resend_key = (os.getenv("RESEND_API_KEY") or "").strip()
     gmail_user = (os.getenv("GMAIL_USER") or "").strip()
     gmail_pw = (os.getenv("GMAIL_APP_PASSWORD") or "").strip()
+
+    has_resend = bool(resend_key and resend_key.startswith("re_"))
+    has_gmail = bool(gmail_user and gmail_pw)
+
     return {
-        "smtp_configured": bool(gmail_user and gmail_pw),
-        "gmail_user": f"{gmail_user[:3]}...@{gmail_user.split('@')[1]}" if "@" in gmail_user else ("set" if gmail_user else "MISSING - Add GMAIL_USER in Render"),
-        "gmail_app_password": "SET (16 chars)" if len(gmail_pw) >= 16 else ("SET" if gmail_pw else "MISSING - Add GMAIL_APP_PASSWORD in Render"),
-        "hint": "Go to Render Dashboard -> duewell web service -> Environment to add GMAIL_USER and GMAIL_APP_PASSWORD"
+        "active_provider": "resend (HTTPS port 443 - Recommended for Render)" if has_resend else ("gmail_smtp (raw socket)" if has_gmail else "in-app fallback"),
+        "resend": {
+            "configured": has_resend,
+            "status": "ready" if has_resend else "Add RESEND_API_KEY to Render Environment Variables"
+        },
+        "gmail_smtp": {
+            "configured": has_gmail,
+            "note": "Blocked on Render free tier (Errno 101); works locally or with paid Render"
+        },
+        "instructions": "Get free API key at resend.com -> Add RESEND_API_KEY in Render -> Emails work instantly!"
     }
 
 @app.post("/test-mail")
