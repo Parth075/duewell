@@ -231,15 +231,15 @@ function BillReminderApp() {
             <div className="search-wrap hidden md:flex"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search bills" aria-label="Search bills" /><kbd>⌘ K</kbd></div>
             <button className="icon-button" onClick={toggleTheme} aria-label="Toggle dark mode">{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</button>
             <div className="relative"><button className="icon-button notification-button" onClick={() => { setNotificationsOpen((open) => !open); setUnread(0); }} aria-label="Open notifications"><Bell size={17} />{unread > 0 && <span className="notification-badge">{unread}</span>}</button>{notificationsOpen && <NotificationPanel reminders={reminders} />}</div>
-            <div className="profile-chip"><span className="avatar">AS</span><span className="hidden text-left sm:block"><strong>Alex Shah</strong><small>Personal</small></span><ChevronRight size={14} className="hidden text-muted-foreground sm:block" /></div>
+            <div className="profile-chip"><span className="avatar">{userInitials}</span><span className="hidden text-left sm:block"><strong>{userName}</strong><small>Personal</small></span><ChevronRight size={14} className="hidden text-muted-foreground sm:block" /></div>
           </div>
         </header>
 
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
-            <Route path="/overview" element={<DashboardPage bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} />} />
-            <Route path="/overview/bills" element={<DashboardPage bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} showAll />} />
-            <Route path="/overview/calendar" element={<CalendarPage bills={bills} onSelect={setSelectedBill} />} />
+            <Route index element={<DashboardPage bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} />} />
+            <Route path="bills" element={<DashboardPage bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} showAll />} />
+            <Route path="calendar" element={<CalendarPage bills={bills} onSelect={setSelectedBill} />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Routes>
         </AnimatePresence>
