@@ -22,47 +22,56 @@ def send_notification(recipient_email: str, subject: str, message: str) -> dict:
     """
     Sends email via Gmail SMTP if credentials exist, otherwise logs in-app notification.
     """
-    gmail_user = os.getenv("GMAIL_USER", GMAIL_USER)
-    gmail_pw = os.getenv("GMAIL_APP_PASSWORD", GMAIL_APP_PASSWORD)
+    gmail_user = (os.getenv("GMAIL_USER") or GMAIL_USER or "").strip()
+    gmail_pw = (os.getenv("GMAIL_APP_PASSWORD") or GMAIL_APP_PASSWORD or "").strip()
 
-    if gmail_user and gmail_pw and recipient_email:
-        try:
-            msg = MIMEMultipart()
-            msg["From"] = f"Duewell Assistant <{gmail_user}>"
-            msg["To"] = recipient_email
-            msg["Subject"] = subject
+    # If recipient is demo address, redirect to GMAIL_USER so real email is received
+    if recipient_email and ("@example.com" in recipient_email or recipient_email == "alex@example.com"):
+        if gmail_user:
+            print(f"[scheduler] Redirecting demo recipient '{recipient_email}' -> '{gmail_user}'")
+            recipient_email = gmail_user
+        else:
+            return {
+                "channel": "in-app",
+                "status": "skipped",
+                "recipient": recipient_email,
+                "reason": "Recipient is demo address (alex@example.com) and GMAIL_USER is not set in Render environment"
+            }
 
-            body = (
-                f"Hello,\n\n"
-                f"{message}\n\n"
-                f"— Duewell Bill Companion\n"
-                f"Less mental load. More room to live."
-            )
-            msg.attach(MIMEText(body, "plain"))
+    if not gmail_user or not gmail_pw:
+        missing = []
+        if not gmail_user: missing.append("GMAIL_USER")
+        if not gmail_pw: missing.append("GMAIL_APP_PASSWORD")
+        reason = f"Missing environment variable(s): {', '.join(missing)} in Render"
+        print(f"[scheduler.in-app] {reason}. Fallback to in-app notification.")
+        return {"channel": "in-app", "status": "sent", "recipient": recipient_email, "reason": reason}
 
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                server.login(gmail_user, gmail_pw)
-                server.send_message(msg)
-
-            try:
-                print(f"[scheduler] Email sent successfully to {recipient_email}")
-            except Exception:
-                pass
-            return {"channel": "email", "status": "sent", "recipient": recipient_email}
-        except Exception as e:
-            try:
-                print(f"[scheduler] Failed to send email via SMTP: {e}")
-            except Exception:
-                pass
-            # Fall back to in-app
-            return {"channel": "in-app", "status": "sent", "error": str(e), "recipient": recipient_email}
+    if not recipient_email:
+        return {"channel": "in-app", "status": "failed", "error": "No recipient email provided"}
 
     try:
-        safe_msg = f"{subject} - {message}".encode('ascii', errors='replace').decode('ascii')
-        print(f"[scheduler.in-app] Notification logged for {recipient_email}: {safe_msg}")
-    except Exception:
-        pass
-    return {"channel": "in-app", "status": "sent", "recipient": recipient_email}
+        msg = MIMEMultipart()
+        msg["From"] = f"Duewell Assistant <{gmail_user}>"
+        msg["To"] = recipient_email
+        msg["Subject"] = subject
+
+        body = (
+            f"Hello,\n\n"
+            f"{message}\n\n"
+            f"— Duewell Bill Companion\n"
+            f"Less mental load. More room to live."
+        )
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(gmail_user, gmail_pw)
+            server.send_message(msg)
+
+        print(f"[scheduler] Email sent successfully to {recipient_email}")
+        return {"channel": "email", "status": "sent", "recipient": recipient_email}
+    except Exception as e:
+        print(f"[scheduler] Failed to send email via SMTP: {e}")
+        return {"channel": "in-app", "status": "failed_smtp", "error": str(e), "recipient": recipient_email}
 
 def trigger_bill_reminder(bill_id: int, db: Session, user_email: str = None) -> models.Reminder:
     """
@@ -113,6 +122,7 @@ def trigger_bill_reminder(bill_id: int, db: Session, user_email: str = None) -> 
     db.add(reminder)
     db.commit()
     db.refresh(reminder)
+    reminder.notif_meta = notif_result
     return reminder
 
 def daily_reminder_sweep():

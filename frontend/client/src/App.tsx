@@ -164,8 +164,15 @@ function BillReminderApp() {
       if (res.ok) {
         const data = await res.json();
         const msg = data.reminder?.message || "Reminder sent successfully";
-        const channelNote = data.reminder?.channel === "email" ? "Email dispatched to your inbox!" : "Reminder scheduled!";
-        toast.success(channelNote, { description: msg });
+        if (data.channel === "email") {
+          toast.success(`Email dispatched to ${data.recipient || "your inbox"}!`, { description: msg });
+        } else if (data.error) {
+          toast.warning("SMTP Error: " + data.error, { description: "Check your Gmail App Password in Render." });
+        } else if (data.reason) {
+          toast.info("In-app reminder scheduled", { description: data.reason });
+        } else {
+          toast.success("Reminder scheduled!", { description: msg });
+        }
         setUnread((prev) => prev + 1);
         loadReminders();
       } else {

@@ -375,9 +375,14 @@ def trigger_reminder(bill_id: int, recipient_email: Optional[str] = None, db: Se
     """
     try:
         reminder = scheduler.trigger_bill_reminder(bill_id=bill_id, db=db, user_email=recipient_email)
+        notif = getattr(reminder, "notif_meta", {})
         return {
             "success": True,
-            "message": "Reminder triggered successfully",
+            "message": "Email sent!" if notif.get("channel") == "email" else "In-app reminder saved",
+            "channel": notif.get("channel", reminder.channel),
+            "recipient": notif.get("recipient"),
+            "error": notif.get("error"),
+            "reason": notif.get("reason"),
             "reminder": {
                 "id": reminder.id,
                 "bill_id": reminder.bill_id,
@@ -391,6 +396,32 @@ def trigger_reminder(bill_id: int, recipient_email: Optional[str] = None, db: Se
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/mail-status")
+def mail_status():
+    """Diagnostic check to see if Render has Gmail SMTP configured."""
+    gmail_user = (os.getenv("GMAIL_USER") or "").strip()
+    gmail_pw = (os.getenv("GMAIL_APP_PASSWORD") or "").strip()
+    return {
+        "smtp_configured": bool(gmail_user and gmail_pw),
+        "gmail_user": f"{gmail_user[:3]}...@{gmail_user.split('@')[1]}" if "@" in gmail_user else ("set" if gmail_user else "MISSING - Add GMAIL_USER in Render"),
+        "gmail_app_password": "SET (16 chars)" if len(gmail_pw) >= 16 else ("SET" if gmail_pw else "MISSING - Add GMAIL_APP_PASSWORD in Render"),
+        "hint": "Go to Render Dashboard -> duewell web service -> Environment to add GMAIL_USER and GMAIL_APP_PASSWORD"
+    }
+
+@app.post("/test-mail")
+def test_mail(to: Optional[str] = None):
+    """Sends a quick test email to verify Gmail SMTP setup."""
+    gmail_user = (os.getenv("GMAIL_USER") or "").strip()
+    target = to or gmail_user
+    if not target or "@" not in target:
+        raise HTTPException(status_code=400, detail="GMAIL_USER is not configured in Render environment variables.")
+    result = scheduler.send_notification(
+        recipient_email=target,
+        subject="Duewell Live Test: SMTP Working!",
+        message="Congratulations! Your Duewell email notification system on Render is fully configured and delivering live emails."
+    )
+    return result
 
 @app.get("/reminders")
 def list_reminders(db: Session = Depends(get_db)):
