@@ -1,0 +1,60 @@
+Build a landing page (/) and a combined auth page (/auth, toggle between Login and Signup) for Duewell, a bill-reminder app. Use React (Vite) + Tailwind CSS + Framer Motion + lucide-react icons, consistent with the rest of the app.
+
+Match this exact design system (from the existing dashboard)
+Background: warm off-white/cream, not pure white (something like 
+#F7F5F0 / Tailwind stone-50)
+Cards/surfaces: pure white, rounded-2xl, a thin soft border (border-gray-200) instead of heavy shadows — shadows should be barely-there, not dramatic
+Primary accent: an indigo/violet-blue (
+#4F46E5–
+#5B5FEF range) — used for the logo mark, primary buttons, active nav states, and links
+Typography: a serif display font (something like Fraunces, Canela, or a similar warm editorial serif) for large headlines — bold weight, slightly tight tracking — paired with a clean sans-serif (Inter or similar) for body text, nav, and UI labels. This serif/sans pairing is core to the brand feel — don't use sans-serif everywhere.
+Status colors (use sparingly, as pill badges): soft green for positive/paid states, soft amber for "due soon"/pending, soft red/coral for urgent/overdue — all as light pastel background + darker text, never solid saturated fills
+Avatar/icon chips: small rounded squares/circles with soft pastel backgrounds (mint, pale yellow, blush pink, powder blue) and a colored icon or initials inside
+Icons: thin-stroke lucide-react style throughout, never filled/bold icons
+Overall mood: minimal, calm, premium-fintech — generous whitespace, muted palette with the indigo as the only "loud" color, nothing glossy or gradient-heavy
+
+Reference: the existing dashboard has a cream background, a white sidebar with the same cream tone, an indigo logo mark, a bold serif "Good evening, Alex" headline, small stat cards with pastel icon chips (dollar sign in a light indigo circle, a bell in a light amber circle), and bill cards with soft pastel avatar initials and status pills. The landing and auth pages should feel like they belong to the exact same product.
+
+Landing page (/)
+Navbar: Duewell logo + wordmark (indigo rounded-square mark + "Duewell" in the serif font, "BILL COMPANION" small caps subtitle like the sidebar), nav links, "Sign in" text link, filled indigo "Get started" button. Fades in on load.
+Hero: large serif headline (something like "Never miss a bill again" — feel free to refine), a calm one-line subhead, two CTAs (filled indigo "Get started", ghost/outline "Sign in"). Fade + slight upward motion on load.
+Product preview: a framed mockup of the actual dashboard inside a rounded card with a subtle border, positioned centered below the hero. Implement a scroll-triggered effect using Framer Motion's useScroll (with a target ref on the section) and useTransform mapping scroll progress to scale (e.g. 0.92 → 1) and y (e.g. 40px → 0) — it should feel like the product gently rises and sharpens into focus as the user scrolls to it, continuously tracking scroll position rather than a one-shot animation.
+Feature highlights: 3 cards in a row (stack on mobile) — "Smart reminders", "Ask Duewell — your AI assistant", "One view of every bill" — each with a small pastel icon chip, a short serif sub-heading, one line of muted body text. Use whileInView with staggered children (~0.1s offset each) so they fade + rise in sequence as the section scrolls into view.
+Closing CTA: centered, short line + one indigo button, simple fade-in on scroll.
+Footer: minimal — logo mark, one line of copyright, a couple of links. Muted gray text.
+Auth page (/auth)
+Centered white card (same card style as the dashboard) on the cream background.
+Duewell logo at the top of the card.
+A pill/tab toggle between "Log in" and "Sign up" — switching plays a smooth AnimatePresence crossfade between the two forms (fade + tiny horizontal shift), not a page reload. Heading above the form changes too ("Welcome back" / "Create your account").
+Login: email, password, "Forgot password?" link, filled indigo submit button.
+Signup: name, email, password, confirm password, filled indigo submit button.
+Inputs: soft rounded borders, indigo focus ring, label above each field in small sans-serif.
+Validation errors: small red text under the field + a subtle shake on failed submit — red should match the app's existing "overdue" red, not a generic bright red.
+On success, redirect to /overview.
+Motion details to apply consistently
+Easing: a soft custom cubic-bezier (e.g. [0.16, 1, 0.3, 1]) everywhere, not linear or default ease — this is what makes it feel "smooth" rather than snappy.
+Durations: 0.4–0.6s for most transitions; the scroll-linked product preview should feel continuous, not stepped.
+Nothing should animate on every re-render — use once: true on scroll reveals so they don't replay when scrolling back up.
+What NOT to do
+Don't invent a different color palette or font pairing — reuse exactly what's described above.
+No glassmorphism, no heavy drop shadows, no gradients on buttons.
+Don't make the scroll animations jumpy or bouncy — this product's whole feel is calm and understated.
+
+Add a subtle ambient background animation behind the hero section of the Duewell landing page, using Framer Motion (already installed). The hero currently has a cream background (
+#F7F5F0-ish) with a serif headline, indigo accent text, and two CTA buttons — the animation sits behind all of that, at low opacity, and never distracts from it.
+
+Approach: soft drifting gradient blobs
+Place 2–3 large blurred circles (blur-3xl in Tailwind, roughly 400–600px) behind the hero content, position: absolute, z-index below the text/buttons, pointer-events-none so they never intercept clicks.
+Colors: use the same indigo/violet from the brand accent (
+#4F46E5–
+#818CF8 range) at very low opacity (8–15%) — they should read as a faint tint, not a visible shape.
+Animate each blob's position slowly and continuously with Framer Motion (animate={{ x: [...], y: [...] }} with a long duration — 15–25s — repeat: Infinity, repeatType: "mirror", ease: "easeInOut"). Offset each blob's animation timing/duration slightly so they don't move in sync.
+Keep the motion small — a drift of roughly 40–80px in each direction is enough. This should feel like slow-moving light, not an obvious moving shape.
+Optional second layer: faint dot-grid texture
+A very light dot-grid pattern (small dots, low-opacity gray/indigo, a few pixels apart) covering the hero background, with a radial mask so it fades out toward the edges and is strongest near the center/behind the headline.
+Static (no animation needed) — it adds texture without adding motion, so it won't compete with the gradient blobs.
+Respect existing constraints
+Reduced motion: wrap the blob animation with a check for prefers-reduced-motion and skip/minimize it for users who have that setting on.
+Performance: this is pure CSS/transform-based motion (translate, not layout-affecting properties), so it should stay smooth without extra optimization.
+Don't let the background bleed outside the hero section — constrain it with overflow: hidden on the hero container.
+The pill badge ("YOUR CALM, IN ONE PLACE"), headline, subtext, and buttons all stay exactly as they are — this only adds a layer behind them.

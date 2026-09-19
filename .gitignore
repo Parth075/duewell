@@ -1,0 +1,37 @@
+# Environments & Secrets
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Python & Databases
+__pycache__/
+*.py[cod]
+*$py.class
+*.db
+*.sqlite
+*.sqlite3
+backend/bills.db
+
+# Node & Frontend
+node_modules/
+dist/
+build/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Temp
+.DS_Store
+Thumbs.db
+tmp/
+temp/
+_temp_zip/
+*.zip
+*.rar
+.idea/
+.vscode/
