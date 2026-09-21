@@ -145,7 +145,7 @@ function BillReminderApp() {
     .join("")
     .slice(0, 2)
     .toUpperCase() || "ME";
-  const [bills, setBills] = useState<Bill[]>(seededBills);
+  const [bills, setBills] = useState<Bill[]>([]);
   const [reminders, setReminders] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<"all" | BillStatus>("all");
@@ -177,15 +177,42 @@ function BillReminderApp() {
     apiRequest("/bills").then(async (response) => {
       if (!response.ok) return;
       const payload = await response.json();
-      if (Array.isArray(payload) && payload.length) setBills(payload);
+      if (Array.isArray(payload)) setBills(payload);
     }).catch(() => undefined);
+  };
+
+  const seedStarterBills = async () => {
+    try {
+      toast.info("Loading sample bills into your account…");
+      for (const b of seededBills) {
+        await apiRequest("/bills", {
+          method: "POST",
+          body: JSON.stringify({
+            biller: b.biller,
+            category: b.category,
+            amount: b.amount,
+            dueDate: b.dueDate,
+            status: b.status,
+            initials: b.initials,
+            accent: b.accent,
+            account: b.account,
+            autopay: b.autopay,
+            note: b.note,
+          }),
+        });
+      }
+      toast.success("Sample bills loaded!", { description: "You can now trigger reminders on any of them." });
+      loadBills();
+    } catch {
+      toast.error("Could not load sample bills");
+    }
   };
 
   const loadReminders = () => {
     apiRequest("/reminders").then(async (response) => {
       if (!response.ok) return;
       const payload = await response.json();
-      if (Array.isArray(payload) && payload.length) setReminders(payload);
+      if (Array.isArray(payload)) setReminders(payload);
     }).catch(() => undefined);
   };
 
@@ -224,7 +251,15 @@ function BillReminderApp() {
         setUnread((prev) => prev + 1);
         loadReminders();
       } else {
-        toast.error("Could not trigger reminder");
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 404) {
+          toast.error("Bill not found in your account", {
+            description: "Click '+ Add a bill' or 'Load demo bills' to add bills to your personal account.",
+          });
+          loadBills();
+        } else {
+          toast.error(err.detail || "Could not trigger reminder");
+        }
       }
     } catch (e) {
       toast.error("Failed to trigger reminder");
@@ -332,8 +367,8 @@ function BillReminderApp() {
 
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
-            <Route index element={<DashboardPage userName={userName} bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} />} />
-            <Route path="bills" element={<DashboardPage userName={userName} bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSelect={setSelectedBill} onMarkPaid={markPaid} showAll />} />
+            <Route index element={<DashboardPage userName={userName} bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSeed={seedStarterBills} onSelect={setSelectedBill} onMarkPaid={markPaid} />} />
+            <Route path="bills" element={<DashboardPage userName={userName} bills={bills} filteredBills={filteredBills} totals={totals} query={query} setQuery={setQuery} activeFilter={activeFilter} setActiveFilter={setActiveFilter} onAdd={openAdd} onSeed={seedStarterBills} onSelect={setSelectedBill} onMarkPaid={markPaid} showAll />} />
             <Route path="calendar" element={<CalendarPage bills={bills} onSelect={setSelectedBill} />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Routes>
@@ -351,21 +386,21 @@ function PageFrame({ children, eyebrow, title, subtitle, action }: { children: R
   return <motion.div className="page-frame" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: .25, ease: [0.23, 1, 0.32, 1] }}><div className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p className="page-subtitle">{subtitle}</p></div>{action}</div>{children}</motion.div>;
 }
 
-function DashboardPage({ bills, filteredBills, totals, query, setQuery, activeFilter, setActiveFilter, onAdd, onSelect, onMarkPaid, showAll = false, userName = "there" }: { bills: Bill[]; filteredBills: Bill[]; totals: { owed: number; dueSoon: number; overdue: number }; query: string; setQuery: (value: string) => void; activeFilter: "all" | BillStatus; setActiveFilter: (value: "all" | BillStatus) => void; onAdd: () => void; onSelect: (bill: Bill) => void; onMarkPaid: (id: number) => void; showAll?: boolean; userName?: string }) {
+function DashboardPage({ bills, filteredBills, totals, query, setQuery, activeFilter, setActiveFilter, onAdd, onSeed, onSelect, onMarkPaid, showAll = false, userName = "there" }: { bills: Bill[]; filteredBills: Bill[]; totals: { owed: number; dueSoon: number; overdue: number }; query: string; setQuery: (value: string) => void; activeFilter: "all" | BillStatus; setActiveFilter: (value: "all" | BillStatus) => void; onAdd: () => void; onSeed?: () => void; onSelect: (bill: Bill) => void; onMarkPaid: (id: number) => void; showAll?: boolean; userName?: string }) {
   const todayFormatted = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date());
   const greeting = userName && userName !== "there" ? `Good evening, ${userName}` : "Good evening";
   return <PageFrame eyebrow={todayFormatted} title={greeting} subtitle="A clear view of what’s coming up — and what can wait." action={<button className="primary-button" onClick={onAdd}><Plus size={17} /> Add a bill</button>}>
     <div className="summary-grid">
-      <SummaryCard label="Outstanding" value={`₹${totals.owed.toLocaleString("en-IN")}`} meta="across 4 upcoming bills" icon={<CircleDollarSign size={19} />} tone="primary" chart />
-      <SummaryCard label="Due this week" value={String(totals.dueSoon)} meta="Next: Airtel on Sep 21" icon={<Bell size={18} />} tone="amber" />
-      <SummaryCard label="Needs attention" value={String(totals.overdue)} meta="HDFC card · 2 days late" icon={<Zap size={18} />} tone="red" />
+      <SummaryCard label="Outstanding" value={`₹${totals.owed.toLocaleString("en-IN")}`} meta="across upcoming bills" icon={<CircleDollarSign size={19} />} tone="primary" chart />
+      <SummaryCard label="Due this week" value={String(totals.dueSoon)} meta="Upcoming commitments" icon={<Bell size={18} />} tone="amber" />
+      <SummaryCard label="Needs attention" value={String(totals.overdue)} meta="Action required" icon={<Zap size={18} />} tone="red" />
     </div>
     <section className="section-block mt-9">
       <div className="section-header"><div><h2>{showAll ? "All bills" : "Your bills"}</h2><p>{showAll ? "Every bill in one place." : "Keep an eye on the next few dates."}</p></div><button className="text-button" onClick={() => setActiveFilter("all")}>View all <ArrowRight size={14} /></button></div>
       <div className="filter-row"><div className="filter-tabs">{([["all", "All"], ["due-soon", "Due soon"], ["overdue", "Overdue"], ["paid", "Paid"]] as const).map(([value, label]) => <button key={value} className={activeFilter === value ? "filter-tab-active" : ""} onClick={() => setActiveFilter(value)}>{label}{value !== "all" && <span>{bills.filter((bill) => bill.status === value).length}</span>}</button>)}</div><div className="search-wrap md:hidden"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search bills" aria-label="Search bills" /></div><button className="filter-button hidden sm:flex" onClick={() => toast.info("Filters are ready for your backend data.")}><Filter size={15} /> Filters</button></div>
-      {filteredBills.length ? <motion.div className="bill-grid" initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: .055 } } }}>{filteredBills.slice(0, showAll ? undefined : 5).map((bill) => <BillCard key={bill.id} bill={bill} onSelect={onSelect} onMarkPaid={onMarkPaid} />)}</motion.div> : <EmptyState onAdd={onAdd} />}
+      {filteredBills.length ? <motion.div className="bill-grid" initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: .055 } } }}>{filteredBills.slice(0, showAll ? undefined : 5).map((bill) => <BillCard key={bill.id} bill={bill} onSelect={onSelect} onMarkPaid={onMarkPaid} />)}</motion.div> : <EmptyState onAdd={onAdd} onSeed={onSeed} hasBills={bills.length > 0} />}
     </section>
-    <section className="insight-banner mt-8"><div className="insight-icon"><Sparkles size={18} /></div><div><p className="eyebrow">Duewell insight</p><p className="insight-text">You’ve paid <strong>₹8,800</strong> this month. That’s 18% less than your average — nice rhythm.</p></div><button className="icon-button ml-auto" onClick={() => toast.info("Insights are generated from your payment history.")}><MoreHorizontal size={17} /></button></section>
+    <section className="insight-banner mt-8"><div className="insight-icon"><Sparkles size={18} /></div><div><p className="eyebrow">Duewell insight</p><p className="insight-text">Keep your recurring obligations on track with automated AI scheduling and reminders.</p></div><button className="icon-button ml-auto" onClick={() => toast.info("Insights are generated from your payment history.")}><MoreHorizontal size={17} /></button></section>
   </PageFrame>;
 }
 
@@ -384,7 +419,23 @@ function statusMeta(status: BillStatus) {
   return { label: "Due soon", className: "status-amber", icon: <span className="status-dot" /> };
 }
 
-function EmptyState({ onAdd }: { onAdd: () => void }) { return <div className="empty-state"><div className="empty-orbit"><Receipt size={26} /></div><h3>No bills match that filter</h3><p>Try another view, or add a new bill to start your list.</p><button className="primary-button" onClick={onAdd}><Plus size={16} /> Add a bill</button></div>; }
+function EmptyState({ onAdd, onSeed, hasBills = false }: { onAdd: () => void; onSeed?: () => void; hasBills?: boolean }) {
+  return (
+    <div className="empty-state">
+      <div className="empty-orbit"><Receipt size={26} /></div>
+      <h3>{hasBills ? "No bills match that filter" : "No bills in your account yet"}</h3>
+      <p>{hasBills ? "Try another view, or add a new bill to start your list." : "Add your first bill, or load sample starter bills into your account to test on-demand reminders."}</p>
+      <div className="flex items-center justify-center gap-3 mt-4">
+        <button className="primary-button" onClick={onAdd}><Plus size={16} /> Add a bill</button>
+        {!hasBills && onSeed && (
+          <button className="primary-button" style={{ background: "transparent", color: "var(--primary)", border: "1px solid var(--border)" }} onClick={onSeed}>
+            <Sparkles size={15} /> Load sample bills
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function NotificationPanel({ reminders }: { reminders: any[] }) {
   const displayReminders = reminders && reminders.length > 0 ? reminders.slice(0, 5) : [
@@ -533,8 +584,12 @@ function AddBillModal({ onClose, onAdd }: { onClose: () => void; onAdd: (bill: B
     try {
       const formData = new FormData();
       formData.append("file", file);
+      const token = localStorage.getItem("duewell_token");
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
       const res = await fetch(`${API_BASE}/bills/upload`, {
         method: "POST",
+        headers,
         body: formData
       });
       if (res.ok) {
