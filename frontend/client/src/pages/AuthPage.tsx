@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import DuewellLogo from "../components/DuewellLogo";
-import { apiRequest } from "../App";
+import { useAuth } from "../contexts/AuthContext";
 
 function AuthField({
   label,
@@ -34,47 +34,54 @@ function AuthField({
 
 export default function AuthPage() {
   const navigate = useNavigate();
-  const location = useLocation();
+  const { login, signup } = useAuth();
   const [mode, setMode] = useState<"login" | "signup">(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("mode") === "signup" || params.get("tab") === "signup" ? "signup" : "login";
   });
   const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [shake, setShake] = useState(false);
+
+  const triggerShake = (msg: string) => {
+    setError(msg);
+    setShake(true);
+    window.setTimeout(() => setShake(false), 460);
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
+
+    // Client-side validation
     if (!form.email || !form.password || (mode === "signup" && (!form.name || !form.confirm))) {
-      setError("Please complete the fields above.");
-      setShake(true);
-      window.setTimeout(() => setShake(false), 460);
+      triggerShake("Please complete the fields above.");
       return;
     }
     if (mode === "signup" && form.password !== form.confirm) {
-      setError("Passwords do not match yet.");
-      setShake(true);
-      window.setTimeout(() => setShake(false), 460);
+      triggerShake("Passwords do not match yet.");
       return;
     }
+
+    setSubmitting(true);
     try {
-      const res = await apiRequest(mode === "login" ? "/auth/login" : "/auth/signup", {
-        method: "POST",
-        body: JSON.stringify({ email: form.email, password: form.password, name: form.name }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.user) localStorage.setItem("duewell_user", JSON.stringify(data.user));
-        if (data.access_token) localStorage.setItem("duewell_token", data.access_token);
+      if (mode === "login") {
+        await login(form.email, form.password);
       } else {
-        localStorage.setItem("duewell_user", JSON.stringify({ name: form.name || (mode === "login" ? "Alex Shah" : "User"), email: form.email }));
+        await signup(form.name, form.email, form.password);
       }
-    } catch {
-      localStorage.setItem("duewell_user", JSON.stringify({ name: form.name || (mode === "login" ? "Alex Shah" : "User"), email: form.email }));
+      toast.success(mode === "login" ? "Welcome back!" : "Account created!");
+      // Honour redirect param if present (e.g. from RequireAuth)
+      const params = new URLSearchParams(window.location.search);
+      const redirect = params.get("redirect") || "/overview";
+      navigate(redirect, { replace: true });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      triggerShake(msg);
+    } finally {
+      setSubmitting(false);
     }
-    toast.success(mode === "login" ? "Welcome back!" : "Account created!");
-    navigate("/overview");
   };
 
   const toggleMode = (next: "login" | "signup") => {
@@ -138,7 +145,7 @@ export default function AuthPage() {
                 label="Name"
                 value={form.name}
                 onChange={(value) => setForm({ ...form, name: value })}
-                placeholder="Alex Shah"
+                placeholder="Your full name"
               />
             )}
             {mode === "signup" && <div className="auth-field-spacer" />}
@@ -147,7 +154,7 @@ export default function AuthPage() {
               type="email"
               value={form.email}
               onChange={(value) => setForm({ ...form, email: value })}
-              placeholder="alex@example.com"
+              placeholder="you@example.com"
             />
             <AuthField
               label="Password"
@@ -178,8 +185,17 @@ export default function AuthPage() {
 
             {error && <p className="auth-error">{error}</p>}
 
-            <button className="primary-button auth-submit" type="submit">
-              {mode === "login" ? "Continue" : "Create account"} <ArrowRight size={16} />
+            <button
+              className="primary-button auth-submit"
+              type="submit"
+              disabled={submitting}
+            >
+              {submitting
+                ? "Please wait…"
+                : mode === "login"
+                ? "Continue"
+                : "Create account"}{" "}
+              <ArrowRight size={16} />
             </button>
           </motion.form>
         </AnimatePresence>

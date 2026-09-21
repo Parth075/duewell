@@ -3,8 +3,9 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Request, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
@@ -16,6 +17,21 @@ import scheduler
 from database import engine, get_db, SessionLocal, Base
 
 load_dotenv()
+
+ENV = os.getenv("ENV", "development")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Primary allowed origin comes from env; dev origins are always allowed.
+_ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "").strip()
+_ALLOWED_ORIGINS: list[str] = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]
+if _ALLOWED_ORIGIN:
+    _ALLOWED_ORIGINS.append(_ALLOWED_ORIGIN)
 
 # Pre-seeded bills data to mirror frontend initial state
 INITIAL_SEEDED_BILLS = [
@@ -94,6 +110,10 @@ INITIAL_SEEDED_BILLS = [
 ]
 
 def seed_database():
+    """Seeds demo data — only runs in development mode."""
+    if ENV in ("production", "test"):
+        return
+
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -155,10 +175,13 @@ def seed_database():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
     seed_database()
-    scheduler.start_scheduler()
+    if ENV != "test":
+        scheduler.start_scheduler()
     yield
-    scheduler.shutdown_scheduler()
+    if ENV != "test":
+        scheduler.shutdown_scheduler()
 
 app = FastAPI(
     title="Duewell - Bill Payment Reminder & Agent API",
@@ -167,16 +190,68 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable CORS for local development and Vercel production deployments
+# ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|.*\.vercel\.app)(:\d+)?$",
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------- Schemas -----------------
+# ── Security scheme (Bearer token) ────────────────────────────────────────────
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> models.User:
+    """
+    FastAPI dependency: decode JWT from Authorization: Bearer header,
+    load the matching User row, raise 401 on any failure.
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please sign in.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = auth.decode_access_token(credentials.credentials)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is invalid or has expired. Please sign in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user_id: Optional[int] = payload.get("user_id")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account not found.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
+
+def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
+    """
+    Extends get_current_user: also requires the user to be the configured admin.
+    When ADMIN_EMAIL is not set, all authenticated users are refused (safe default).
+    """
+    if not ADMIN_EMAIL or current_user.email != ADMIN_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required.",
+        )
+    return current_user
+
+# ── Schemas ────────────────────────────────────────────────────────────────────
 
 class BillCreate(BaseModel):
     biller: str
@@ -210,9 +285,9 @@ class LoginRequest(BaseModel):
 class SignupRequest(BaseModel):
     email: str
     password: str
-    name: Optional[str] = "Alex Shah"
+    name: Optional[str] = ""
 
-# ----------------- Helper Functions -----------------
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def format_bill_response(bill: models.Bill) -> dict:
     return {
@@ -229,7 +304,17 @@ def format_bill_response(bill: models.Bill) -> dict:
         "note": bill.note or ""
     }
 
-# ----------------- Routes -----------------
+def _get_bill_for_user(bill_id: int, user: models.User, db: Session) -> models.Bill:
+    """Load a bill and verify it belongs to the current user. Returns 404 if not found or not owned."""
+    bill = db.query(models.Bill).filter(
+        models.Bill.id == bill_id,
+        models.Bill.user_id == user.id
+    ).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    return bill
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
@@ -244,7 +329,8 @@ def root():
 def health_check():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
-# --- Auth Routes ---
+# ── Auth routes (public) ───────────────────────────────────────────────────────
+
 @app.post("/auth/signup")
 def signup(req: SignupRequest, db: Session = Depends(get_db)):
     existing = db.query(models.User).filter(models.User.email == req.email).first()
@@ -252,7 +338,7 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email already registered")
     user = models.User(
         email=req.email,
-        name=req.name,
+        name=req.name or req.email.split("@")[0],
         hashed_password=auth.hash_password(req.password)
     )
     db.add(user)
@@ -265,35 +351,39 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
 def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == req.email).first()
     if not user or not auth.verify_password(req.password, user.hashed_password):
-        # Demo tolerance: allow test login for alex@example.com
-        if req.email == "alex@example.com":
-            user = db.query(models.User).filter(models.User.email == "alex@example.com").first()
-        else:
-            raise HTTPException(status_code=401, detail="Invalid email or password")
-    
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     token = auth.create_access_token({"sub": user.email, "user_id": user.id})
     return {"token": token, "user": {"id": user.id, "email": user.email, "name": user.name}}
 
 @app.get("/auth/me")
-def get_current_user(db: Session = Depends(get_db)):
-    user = db.query(models.User).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"id": user.id, "email": user.email, "name": user.name}
+def me(current_user: models.User = Depends(get_current_user)):
+    """Returns the currently authenticated user's profile."""
+    return {"id": current_user.id, "email": current_user.email, "name": current_user.name}
 
-# --- Bills CRUD ---
+# ── Bills CRUD (all protected + user-scoped) ───────────────────────────────────
+
 @app.get("/bills")
-def list_bills(db: Session = Depends(get_db)):
-    bills = db.query(models.Bill).order_by(models.Bill.id.desc()).all()
+def list_bills(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bills = (
+        db.query(models.Bill)
+        .filter(models.Bill.user_id == current_user.id)
+        .order_by(models.Bill.id.desc())
+        .all()
+    )
     return [format_bill_response(b) for b in bills]
 
 @app.post("/bills", status_code=status.HTTP_201_CREATED)
-def create_bill(bill_in: BillCreate, db: Session = Depends(get_db)):
-    # Generate initials
+def create_bill(
+    bill_in: BillCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     words = bill_in.biller.strip().split()
     initials = "".join([w[0] for w in words[:2]]).upper() if words else "BL"
-    
-    # Category color map
+
     color_map = {
         "Internet": "#e84645",
         "Credit card": "#e85f3f",
@@ -306,6 +396,7 @@ def create_bill(bill_in: BillCreate, db: Session = Depends(get_db)):
     accent = bill_in.accent or color_map.get(bill_in.category, "#485cc7")
 
     bill = models.Bill(
+        user_id=current_user.id,
         biller=bill_in.biller,
         category=bill_in.category or "Other",
         amount=bill_in.amount,
@@ -323,41 +414,47 @@ def create_bill(bill_in: BillCreate, db: Session = Depends(get_db)):
     return format_bill_response(bill)
 
 @app.get("/bills/{bill_id}")
-def get_bill(bill_id: int, db: Session = Depends(get_db)):
-    bill = db.query(models.Bill).filter(models.Bill.id == bill_id).first()
-    if not bill:
-        raise HTTPException(status_code=404, detail="Bill not found")
-    return format_bill_response(bill)
+def get_bill(
+    bill_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return format_bill_response(_get_bill_for_user(bill_id, current_user, db))
 
 @app.patch("/bills/{bill_id}")
-def update_bill(bill_id: int, updates: BillUpdate, db: Session = Depends(get_db)):
-    bill = db.query(models.Bill).filter(models.Bill.id == bill_id).first()
-    if not bill:
-        raise HTTPException(status_code=404, detail="Bill not found")
-    
+def update_bill(
+    bill_id: int,
+    updates: BillUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bill = _get_bill_for_user(bill_id, current_user, db)
     update_data = updates.dict(exclude_unset=True)
     for field, value in update_data.items():
         setattr(bill, field, value)
-    
     db.commit()
     db.refresh(bill)
     return format_bill_response(bill)
 
 @app.delete("/bills/{bill_id}")
-def delete_bill(bill_id: int, db: Session = Depends(get_db)):
-    bill = db.query(models.Bill).filter(models.Bill.id == bill_id).first()
-    if not bill:
-        raise HTTPException(status_code=404, detail="Bill not found")
+def delete_bill(
+    bill_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bill = _get_bill_for_user(bill_id, current_user, db)
     db.delete(bill)
     db.commit()
     return {"success": True, "message": f"Bill {bill_id} deleted"}
 
-# --- Document Upload & Gemini Extraction ---
+# ── Document upload & AI extraction ───────────────────────────────────────────
+
 @app.post("/bills/upload")
-async def upload_bill_document(file: UploadFile = File(...)):
-    """
-    Accepts bill image/PDF, extracts structured details using Gemini AI.
-    """
+async def upload_bill_document(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Accepts bill image/PDF, extracts structured details using Gemini AI."""
     try:
         content = await file.read()
         mime_type = file.content_type or "image/png"
@@ -366,15 +463,24 @@ async def upload_bill_document(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
 
-# --- Reminder Trigger ---
+# ── Reminder trigger ───────────────────────────────────────────────────────────
+
 @app.post("/bills/{bill_id}/trigger-reminder")
-def trigger_reminder(bill_id: int, recipient_email: Optional[str] = None, db: Session = Depends(get_db)):
-    """
-    Triggers an on-demand reminder for a bill using agent.decide_reminder_schedule
-    and scheduler.send_notification.
-    """
+def trigger_reminder(
+    bill_id: int,
+    recipient_email: Optional[str] = None,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Triggers an on-demand reminder for a bill the current user owns."""
+    # Verify ownership first
+    _get_bill_for_user(bill_id, current_user, db)
     try:
-        reminder = scheduler.trigger_bill_reminder(bill_id=bill_id, db=db, user_email=recipient_email)
+        # Use the requester's email if none explicitly supplied
+        effective_email = recipient_email or current_user.email
+        reminder = scheduler.trigger_bill_reminder(
+            bill_id=bill_id, db=db, user_email=effective_email
+        )
         notif = getattr(reminder, "notif_meta", {})
         return {
             "success": True,
@@ -397,9 +503,51 @@ def trigger_reminder(bill_id: int, recipient_email: Optional[str] = None, db: Se
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ── Reminders (user-scoped through bill ownership) ────────────────────────────
+
+@app.get("/reminders")
+def list_reminders(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    reminders = (
+        db.query(models.Reminder)
+        .join(models.Bill, models.Reminder.bill_id == models.Bill.id)
+        .filter(models.Bill.user_id == current_user.id)
+        .order_by(models.Reminder.id.desc())
+        .limit(20)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "bill_id": r.bill_id,
+            "reminder_date": r.reminder_date,
+            "status": r.status,
+            "channel": r.channel,
+            "message": r.message
+        }
+        for r in reminders
+    ]
+
+# ── AI Chat (user-scoped bills) ────────────────────────────────────────────────
+
+@app.post("/chat")
+def chat_with_agent(
+    req: ChatRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bills = db.query(models.Bill).filter(models.Bill.user_id == current_user.id).all()
+    bills_list = [format_bill_response(b) for b in bills]
+    reply = agent.answer_query(user_query=req.message, bills=bills_list)
+    return {"reply": reply}
+
+# ── Admin-only diagnostic routes ───────────────────────────────────────────────
+
 @app.get("/mail-status")
-def mail_status():
-    """Diagnostic check to see email provider configuration on Render."""
+def mail_status(admin: models.User = Depends(require_admin)):
+    """Diagnostic check — admin only."""
     resend_key = (os.getenv("RESEND_API_KEY") or "").strip()
     gmail_user = (os.getenv("GMAIL_USER") or "").strip()
     gmail_pw = (os.getenv("GMAIL_APP_PASSWORD") or "").strip()
@@ -421,41 +569,18 @@ def mail_status():
     }
 
 @app.post("/test-mail")
-def test_mail(to: Optional[str] = None):
-    """Sends a quick test email to verify Gmail SMTP setup."""
+def test_mail(to: Optional[str] = None, admin: models.User = Depends(require_admin)):
+    """Sends a test email — admin only."""
     gmail_user = (os.getenv("GMAIL_USER") or "").strip()
     target = to or gmail_user
     if not target or "@" not in target:
-        raise HTTPException(status_code=400, detail="GMAIL_USER is not configured in Render environment variables.")
+        raise HTTPException(status_code=400, detail="GMAIL_USER is not configured.")
     result = scheduler.send_notification(
         recipient_email=target,
         subject="Duewell Live Test: SMTP Working!",
-        message="Congratulations! Your Duewell email notification system on Render is fully configured and delivering live emails."
+        message="Congratulations! Your Duewell email notification system is fully configured and delivering live emails."
     )
     return result
-
-@app.get("/reminders")
-def list_reminders(db: Session = Depends(get_db)):
-    reminders = db.query(models.Reminder).order_by(models.Reminder.id.desc()).limit(20).all()
-    return [
-        {
-            "id": r.id,
-            "bill_id": r.bill_id,
-            "reminder_date": r.reminder_date,
-            "status": r.status,
-            "channel": r.channel,
-            "message": r.message
-        }
-        for r in reminders
-    ]
-
-# --- AI Chat Assistant ---
-@app.post("/chat")
-def chat_with_agent(req: ChatRequest, db: Session = Depends(get_db)):
-    bills = db.query(models.Bill).all()
-    bills_list = [format_bill_response(b) for b in bills]
-    reply = agent.answer_query(user_query=req.message, bills=bills_list)
-    return {"reply": reply}
 
 if __name__ == "__main__":
     import uvicorn

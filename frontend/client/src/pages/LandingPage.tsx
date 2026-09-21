@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import DuewellLogo from "../components/DuewellLogo";
+import { useAuth } from "../contexts/AuthContext";
 
 type BillStatus = "overdue" | "due-soon" | "paid";
 type BillPreview = {
@@ -69,6 +70,17 @@ function PublicNav() {
 
 export default function LandingPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const displayName = user?.name ? user.name.trim().split(" ")[0] : "there";
+  const initials = user?.name
+    ? user.name
+        .split(" ")
+        .filter(Boolean)
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : "DW";
   const previewRef = React.useRef<HTMLDivElement>(null);
   const { scrollYProgress } = useScroll({ target: previewRef, offset: ["start end", "center center"] });
   const previewScale = useTransform(scrollYProgress, [0, 1], [0.92, 1]);
@@ -188,12 +200,12 @@ export default function LandingPage() {
                   <div className="preview-top-icons">
                     <Moon size={13} />
                     <Bell size={13} />
-                    <span>AS</span>
+                    <span>{initials}</span>
                   </div>
                 </div>
                 <div className="preview-content">
                   <p className="eyebrow">Friday, September 18, 2026</p>
-                  <h2>Good evening, Alex</h2>
+                  <h2>Good evening, {displayName}</h2>
                   <p className="preview-subtitle">A clear view of what’s coming up — and what can wait.</p>
                   <div className="preview-stats">
                     <div>

@@ -11,11 +11,14 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext";
 
 export default function ProductPreview() {
   const containerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const shouldReduceMotion = useReducedMotion();
+  const { user } = useAuth();
+  const displayName = user?.name ? user.name.trim().split(" ")[0] : "there";
 
   const { scrollYProgress } = useScroll({
     target: containerRef,
@@ -73,7 +76,7 @@ export default function ProductPreview() {
                 className="text-2xl sm:text-3xl font-normal text-foreground"
                 style={{ fontFamily: '"DM Serif Display", Georgia, serif' }}
               >
-                Good evening, Alex
+                Good evening, {displayName}
               </h2>
             </div>
             <span className="text-xs text-muted-foreground hidden sm:block">

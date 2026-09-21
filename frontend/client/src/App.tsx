@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
 import {
@@ -15,6 +16,7 @@ import {
   Filter,
   Home,
   LayoutDashboard,
+  LogOut,
   Menu,
   MessageCircle,
   MoreHorizontal,
@@ -33,6 +35,7 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
+import { AuthProvider, useAuth, callLogout } from "./contexts/AuthContext";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -68,22 +71,63 @@ const navItems = [
   { label: "Calendar", icon: Home, path: "/overview/calendar" },
 ];
 
-export function apiRequest(path: string, options?: RequestInit) {
-  return fetch(`${API_BASE}${path}`, { headers: { "Content-Type": "application/json" }, ...options });
+export function apiRequest(path: string, options?: RequestInit): Promise<Response> {
+  const token = localStorage.getItem("duewell_token");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string>),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(`${API_BASE}${path}`, { ...options, headers }).then((res) => {
+    if (res.status === 401) callLogout();
+    return res;
+  });
+}
+
+/** Redirects to /auth if there is no valid session. Shows a minimal spinner while the token is being validated. */
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { token, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
+          <Wallet size={28} style={{ color: "#4F46E5" }} />
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (!token) {
+    return <Navigate to={`/auth?redirect=${encodeURIComponent(location.pathname)}`} replace />;
+  }
+
+  return <>{children}</>;
+}
+
+/** Redirects already-authenticated users away from /auth to the dashboard. */
+function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
+  const { token, loading } = useAuth();
+  if (loading) return null;
+  if (token) return <Navigate to="/overview" replace />;
+  return <>{children}</>;
 }
 
 function App() {
   return (
     <ThemeProvider defaultTheme="light" switchable>
       <BrowserRouter>
-        <Toaster position="bottom-right" richColors />
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/auth" element={<AuthPage />} />
-          <Route path="/overview/*" element={<BillReminderApp />} />
-          <Route path="/login" element={<Navigate to="/auth?tab=login" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <AuthProvider>
+          <Toaster position="bottom-right" richColors />
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/auth" element={<RedirectIfAuthed><AuthPage /></RedirectIfAuthed>} />
+            <Route path="/overview/*" element={<RequireAuth><BillReminderApp /></RequireAuth>} />
+            <Route path="/login" element={<Navigate to="/auth?tab=login" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>
   );
@@ -93,10 +137,14 @@ function BillReminderApp() {
   const navigate = useNavigate();
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
-  // Read the logged-in user from localStorage (set in AuthPage on login/signup)
-  const storedUser = (() => { try { const u = localStorage.getItem("duewell_user"); return u ? JSON.parse(u) : null; } catch { return null; } })();
-  const userName = storedUser?.name || storedUser?.email?.split("@")[0] || "Alex";
-  const userInitials = userName.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "AS";
+  const { user, token, logout } = useAuth();
+  const userName = user?.name || user?.email?.split("@")[0] || "there";
+  const userInitials = userName
+    .split(" ")
+    .map((p: string) => p[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "ME";
   const [bills, setBills] = useState<Bill[]>(seededBills);
   const [reminders, setReminders] = useState<any[]>([]);
   const [query, setQuery] = useState("");
@@ -159,7 +207,7 @@ function BillReminderApp() {
   const triggerReminder = async (billId: number) => {
     try {
       toast.info("Analyzing reminder schedule with AI…");
-      const userParam = storedUser?.email ? `?recipient_email=${encodeURIComponent(storedUser.email)}` : "";
+      const userParam = user?.email ? `?recipient_email=${encodeURIComponent(user.email)}` : "";
       const res = await apiRequest(`/bills/${billId}/trigger-reminder${userParam}`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
@@ -240,7 +288,45 @@ function BillReminderApp() {
             <div className="search-wrap hidden md:flex"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search bills" aria-label="Search bills" /><kbd>⌘ K</kbd></div>
             <button className="icon-button" onClick={toggleTheme} aria-label="Toggle dark mode">{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</button>
             <div className="relative"><button className="icon-button notification-button" onClick={() => { setNotificationsOpen((open) => !open); setUnread(0); }} aria-label="Open notifications"><Bell size={17} />{unread > 0 && <span className="notification-badge">{unread}</span>}</button>{notificationsOpen && <NotificationPanel reminders={reminders} />}</div>
-            <div className="profile-chip"><span className="avatar">{userInitials}</span><span className="hidden text-left sm:block"><strong>{userName}</strong><small>Personal</small></span><ChevronRight size={14} className="hidden text-muted-foreground sm:block" /></div>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button className="profile-chip" aria-label="Account menu">
+                  <span className="avatar">{userInitials}</span>
+                  <span className="hidden text-left sm:block">
+                    <strong>{userName}</strong>
+                    <small>{user?.email ?? "Personal"}</small>
+                  </span>
+                  <ChevronRight size={14} className="hidden text-muted-foreground sm:block" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="profile-dropdown" sideOffset={6} align="end">
+                  <div className="profile-dropdown-header">
+                    <span className="avatar avatar-lg">{userInitials}</span>
+                    <div>
+                      <strong>{userName}</strong>
+                      <small>{user?.email}</small>
+                    </div>
+                  </div>
+                  <DropdownMenu.Separator className="profile-dropdown-sep" />
+                  <DropdownMenu.Item
+                    className="profile-dropdown-item"
+                    onSelect={() => toast.info("Settings coming soon.")}
+                  >
+                    <Settings size={15} />
+                    Settings
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="profile-dropdown-sep" />
+                  <DropdownMenu.Item
+                    className="profile-dropdown-item profile-dropdown-item-danger"
+                    onSelect={logout}
+                  >
+                    <LogOut size={15} />
+                    Sign out
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </div>
         </header>
 
@@ -529,7 +615,7 @@ function ChatPanel({ messages, draft, setDraft, typing, onClose, onSubmit }: { m
 
 function CalendarPage({ bills, onSelect }: { bills: Bill[]; onSelect: (bill: Bill) => void }) { return <PageFrame eyebrow="September 2026" title="Payment calendar" subtitle="A calmer way to see the month ahead."><div className="calendar-layout"><div className="calendar-card"><div className="calendar-toolbar"><button className="icon-button"><ChevronRight size={17} className="rotate-180" /></button><h2>September 2026</h2><button className="icon-button"><ChevronRight size={17} /></button></div><div className="week-labels">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{Array.from({ length: 30 }, (_, i) => { const day = i + 1; const bill = bills.find((item) => Number(item.dueDate.replace(/\D/g, "")) === day); return <button key={day} className={`calendar-day ${day === 18 ? "today" : ""} ${bill ? "has-bill" : ""}`} onClick={() => bill && onSelect(bill)}><span>{day}</span>{bill && <i style={{ background: bill.accent }} />}</button>; })}</div></div><div className="calendar-agenda"><div className="section-header"><div><h2>Coming up</h2><p>Next 14 days</p></div><Filter size={16} className="text-muted-foreground" /></div>{bills.filter((bill) => bill.status !== "paid").slice(0, 4).map((bill) => <button className="agenda-item" key={bill.id} onClick={() => onSelect(bill)}><span className="agenda-date">{bill.dueDate.split(" ")[1] || "18"}<small>SEP</small></span><span className="agenda-copy"><strong>{bill.biller}</strong><small>{bill.category}</small></span><span className="agenda-amount">₹{bill.amount.toLocaleString("en-IN")}</span></button>)}</div></div></PageFrame>; }
 
-function LoginPage() { const navigate = useNavigate(); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const submit = async (event: React.FormEvent) => { event.preventDefault(); try { await apiRequest("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }); } catch { /* demo mode */ } navigate("/"); }; return <div className="login-screen"><div className="login-art"><span className="brand-mark"><Wallet size={18} /></span><p className="eyebrow">A better way to remember</p><h1>Less mental load.<br /><em>More room to live.</em></h1><p>Duewell quietly keeps your payments in check, so you can spend your attention elsewhere.</p><div className="login-art-card"><div className="flex items-center justify-between"><span className="eyebrow">This week</span><span className="status-pill status-green"><CheckCircle2 size={13} /> On track</span></div><strong>2 bills due</strong><div className="art-progress"><span /></div><small>All reminders are up to date.</small></div></div><motion.form className="login-card" onSubmit={submit} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><button type="button" className="brand-lockup mb-12" onClick={() => navigate("/")}><span className="brand-mark"><Wallet size={18} /></span><span><strong>Duewell</strong><small>bill companion</small></span></button><p className="eyebrow">Welcome back</p><h2>Sign in to your calm.</h2><p className="login-subtitle">Your bills are waiting, not demanding.</p><label><span>Email address</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="alex@example.com" required /></label><label><span>Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" required /></label><button className="primary-button w-full justify-center" type="submit">Continue <ArrowRight size={16} /></button><p className="login-footnote">New to Duewell? <button type="button" onClick={() => toast.info("Signup is ready to connect to your auth flow.")}>Create an account</button></p></motion.form></div>; }
+function LoginPage() { const navigate = useNavigate(); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const submit = async (event: React.FormEvent) => { event.preventDefault(); try { await apiRequest("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }); } catch { /* demo mode */ } navigate("/"); }; return <div className="login-screen"><div className="login-art"><span className="brand-mark"><Wallet size={18} /></span><p className="eyebrow">A better way to remember</p><h1>Less mental load.<br /><em>More room to live.</em></h1><p>Duewell quietly keeps your payments in check, so you can spend your attention elsewhere.</p><div className="login-art-card"><div className="flex items-center justify-between"><span className="eyebrow">This week</span><span className="status-pill status-green"><CheckCircle2 size={13} /> On track</span></div><strong>2 bills due</strong><div className="art-progress"><span /></div><small>All reminders are up to date.</small></div></div><motion.form className="login-card" onSubmit={submit} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><button type="button" className="brand-lockup mb-12" onClick={() => navigate("/")}><span className="brand-mark"><Wallet size={18} /></span><span><strong>Duewell</strong><small>bill companion</small></span></button><p className="eyebrow">Welcome back</p><h2>Sign in to your calm.</h2><p className="login-subtitle">Your bills are waiting, not demanding.</p><label><span>Email address</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required /></label><label><span>Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" required /></label><button className="primary-button w-full justify-center" type="submit">Continue <ArrowRight size={16} /></button><p className="login-footnote">New to Duewell? <button type="button" onClick={() => toast.info("Signup is ready to connect to your auth flow.")}>Create an account</button></p></motion.form></div>; }
 
 export default App;
 
